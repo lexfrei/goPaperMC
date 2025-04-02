@@ -12,6 +12,7 @@ goPaperMC is a Go client for the [PaperMC API](https://api.papermc.io), which al
 - Verify SHA256 hashes of downloaded files
 - Get the latest and recommended versions and builds
 - Limit query results to N latest items
+- CI integration for building Docker images
 - CLI utility with Cobra for powerful command handling
 - Configuration with Viper for config files and environment variables
 - Shell completions (bash, zsh, fish, powershell)
@@ -65,6 +66,12 @@ papermc download paper 1.19.4 100
 # Download to specific directory
 papermc download paper 1.19.4 100 -d ./server
 
+# Generate CI matrix for GitHub Actions
+papermc ci github-actions paper --limit=3
+
+# Get the latest version of a project
+papermc ci latest paper
+
 # Generate shell completions
 papermc completion bash > ~/.bash_completion.d/papermc
 
@@ -97,6 +104,107 @@ export PAPERMC_LIMIT=5
 
 # Set default project
 export PAPERMC_DEFAULT_PROJECT=paper
+```
+
+## CI Integration
+
+goPaperMC includes special commands for CI environments:
+
+### GitHub Actions Integration
+
+The `ci` command group provides utilities specifically designed for CI environments:
+
+```bash
+# Generate a GitHub Actions compatible matrix for the latest 3 versions
+papermc ci github-actions paper --limit=3
+
+# Get just the latest version string
+papermc ci latest paper
+
+# Get a JSON array of version information
+papermc ci matrix paper --limit=3
+```
+
+### Example GitHub Actions Workflow
+
+A complete workflow for building Docker images for the latest builds of the last 3 Paper versions:
+
+```yaml
+name: Build Paper Docker Images
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Run daily
+  workflow_dispatch:  # Allow manual triggers
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      latest: ${{ steps.set-latest.outputs.latest }}
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install goPaperMC
+        run: |
+          go install github.com/lexfrei/goPaperMC/cmd/papermc@latest
+
+      - name: Get Build Matrix
+        id: set-matrix
+        run: |
+          # Get build matrix for GitHub Actions from the last 3 versions
+          MATRIX=$(papermc --limit=3 ci github-actions paper)
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
+      - name: Get Latest Version
+        id: set-latest
+        run: |
+          # Get the latest version string
+          LATEST=$(papermc ci latest paper)
+          echo "latest=$LATEST" >> $GITHUB_OUTPUT
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: yourrepo/paper
+          tags: |
+            type=raw,value=${{ matrix.version }}-${{ matrix.build }}
+            type=raw,value=${{ matrix.version }}
+            ${{ matrix.version == needs.prepare.outputs.latest && 'type=raw,value=latest' || '' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            DOWNLOAD_URL=${{ matrix.url }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
 ```
 
 ## Library Usage
