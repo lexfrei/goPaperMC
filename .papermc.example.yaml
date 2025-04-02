@@ -1,0 +1,15 @@
+# PaperMC CLI configuration
+
+# Global settings
+limit: 10                  # Limit the number of items to display (0 = no limit)
+verbose: false             # Enable verbose output
+
+# Default values
+default_project: "paper"   # Default project to use when not specified
+default_version: ""        # Default version to use (leave empty for latest)
+
+# Output settings
+output_format: "text"      # Output format (text, json - future support)
+
+# API settings
+timeout: 30                # API request timeout in seconds
