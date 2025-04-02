@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -41,7 +40,7 @@ func (c *Client) DownloadFile(ctx context.Context, projectID, version string, bu
 	defer reader.Close()
 
 	// Create destination directory if it doesn't exist
-	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 		return nil, errors.Wrap(err, "failed to create destination directory")
 	}
 
@@ -116,25 +115,21 @@ func (c *Client) GetDefaultDownloadName(ctx context.Context, projectID, version 
 		return "", errors.Wrap(err, "failed to get build info")
 	}
 
-	// Usually the main file is named "paper-<version>-<build>.jar"
-	expectedName := fmt.Sprintf("%s-%s-%d.jar", projectID, version, build)
-	
-	for name := range buildInfo.Downloads {
-		if name == expectedName {
-			return name, nil
+	// Check if there's an "application" download (which is common for PaperMC)
+	if download, ok := buildInfo.Downloads["application"]; ok {
+		return download.Name, nil
+	}
+
+	// As a fallback, look for any download with a .jar extension
+	for _, download := range buildInfo.Downloads {
+		if filepath.Ext(download.Name) == ".jar" {
+			return download.Name, nil
 		}
 	}
 
-	// If the standard name is not found, get the first jar file
-	for name := range buildInfo.Downloads {
-		if filepath.Ext(name) == ".jar" {
-			return name, nil
-		}
-	}
-
-	// If no jar file, get the first file
-	for name := range buildInfo.Downloads {
-		return name, nil
+	// If no jar file, get the first file's name
+	for _, download := range buildInfo.Downloads {
+		return download.Name, nil
 	}
 
 	return "", errors.New("no downloads found for this build")
