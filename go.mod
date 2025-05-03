@@ -3,7 +3,7 @@ module github.com/lexfrei/goPaperMC
 go 1.24
 
 require (
-	github.com/cockroachdb/errors v1.11.3
+	github.com/cockroachdb/errors v1.12.0
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1
 )
