@@ -11,20 +11,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// BuildInfo contains information about a build for CI output.
 type BuildInfo struct {
 	Version string `json:"version"`
 	Build   int32  `json:"build"`
 	URL     string `json:"url"`
 }
 
-// ciCmd represents the ci command
+// ciCmd represents the ci command.
 var ciCmd = &cobra.Command{
 	Use:   "ci",
 	Short: "Commands specifically for CI environments",
 	Long:  `Commands designed to work well in Continuous Integration environments like GitHub Actions.`,
 }
 
-// ciMatrixCmd represents the ci matrix command
+// ciMatrixCmd represents the ci matrix command.
 var ciMatrixCmd = &cobra.Command{
 	Use:   "matrix PROJECT_ID",
 	Short: "Generate a JSON matrix for CI builds",
@@ -33,18 +34,19 @@ This is designed to be used in CI environments to generate a build matrix.
 
 Example:
   papermc ci matrix paper --limit=3
-  
+
 This will output a JSON array of objects with version, build, and URL information
 for the latest builds of the last 3 versions of the paper project.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		projectID := args[0]
 		client := api.NewClient()
-		if limit := GetLimit(); limit > 0 {
-			client.WithLimit(limit)
+
+		// Apply channel filter if set
+		if ch := GetChannel(); ch != "" {
+			client.WithChannel(api.Channel(ch))
 		}
 
-		// Create context
 		ctx := context.Background()
 
 		// Get project info to get versions
@@ -54,28 +56,38 @@ for the latest builds of the last 3 versions of the paper project.`,
 			os.Exit(1)
 		}
 
-		// Build array of builds
-		var buildInfos []BuildInfo
+		versions := projectInfo.FlattenVersions()
+		limit := GetLimit()
 
-		// Get builds for each version (limited by client)
-		for _, version := range projectInfo.Versions {
-			buildNum, err := client.GetLatestBuild(ctx, projectID, version)
+		// Build array of builds, iterating from newest to oldest
+		var buildInfos []BuildInfo
+		for i := len(versions) - 1; i >= 0; i-- {
+			if limit > 0 && len(buildInfos) >= limit {
+				break
+			}
+
+			version := versions[i]
+			build, err := client.GetLatestBuildV3(ctx, projectID, version)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting latest build for %s: %v\n", version, errors.UnwrapAll(err))
+				// Skip versions without matching builds
 				continue
 			}
 
-			url, err := client.GetBuildURL(ctx, projectID, version, buildNum)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting URL for %s build %d: %v\n", version, buildNum, errors.UnwrapAll(err))
+			url := build.GetDownloadURL()
+			if url == "" {
 				continue
 			}
 
 			buildInfos = append(buildInfos, BuildInfo{
 				Version: version,
-				Build:   buildNum,
+				Build:   build.ID,
 				URL:     url,
 			})
+		}
+
+		// Reverse to get oldest-to-newest order
+		for i, j := 0, len(buildInfos)-1; i < j; i, j = i+1, j-1 {
+			buildInfos[i], buildInfos[j] = buildInfos[j], buildInfos[i]
 		}
 
 		// Output as JSON
@@ -89,7 +101,7 @@ for the latest builds of the last 3 versions of the paper project.`,
 	},
 }
 
-// ciActionsCmd represents the ci github-actions command
+// ciActionsCmd represents the ci github-actions command.
 var ciActionsCmd = &cobra.Command{
 	Use:   "github-actions PROJECT_ID",
 	Short: "Output GitHub Actions compatible JSON matrix",
@@ -97,7 +109,7 @@ var ciActionsCmd = &cobra.Command{
 
 Example:
   papermc ci github-actions paper --limit=3
-  
+
 This will output JSON that can be directly used in a GitHub Actions workflow:
 
   matrix=$(papermc ci github-actions paper --limit=3)
@@ -106,11 +118,12 @@ This will output JSON that can be directly used in a GitHub Actions workflow:
 	Run: func(cmd *cobra.Command, args []string) {
 		projectID := args[0]
 		client := api.NewClient()
-		if limit := GetLimit(); limit > 0 {
-			client.WithLimit(limit)
+
+		// Apply channel filter if set
+		if ch := GetChannel(); ch != "" {
+			client.WithChannel(api.Channel(ch))
 		}
 
-		// Create context
 		ctx := context.Background()
 
 		// Get project info to get versions
@@ -120,28 +133,38 @@ This will output JSON that can be directly used in a GitHub Actions workflow:
 			os.Exit(1)
 		}
 
-		// Build array of builds
-		var buildInfos []BuildInfo
+		versions := projectInfo.FlattenVersions()
+		limit := GetLimit()
 
-		// Get builds for each version (limited by client)
-		for _, version := range projectInfo.Versions {
-			buildNum, err := client.GetLatestBuild(ctx, projectID, version)
+		// Build array of builds, iterating from newest to oldest
+		var buildInfos []BuildInfo
+		for i := len(versions) - 1; i >= 0; i-- {
+			if limit > 0 && len(buildInfos) >= limit {
+				break
+			}
+
+			version := versions[i]
+			build, err := client.GetLatestBuildV3(ctx, projectID, version)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting latest build for %s: %v\n", version, errors.UnwrapAll(err))
+				// Skip versions without matching builds
 				continue
 			}
 
-			url, err := client.GetBuildURL(ctx, projectID, version, buildNum)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting URL for %s build %d: %v\n", version, buildNum, errors.UnwrapAll(err))
+			url := build.GetDownloadURL()
+			if url == "" {
 				continue
 			}
 
 			buildInfos = append(buildInfos, BuildInfo{
 				Version: version,
-				Build:   buildNum,
+				Build:   build.ID,
 				URL:     url,
 			})
+		}
+
+		// Reverse to get oldest-to-newest order
+		for i, j := 0, len(buildInfos)-1; i < j; i, j = i+1, j-1 {
+			buildInfos[i], buildInfos[j] = buildInfos[j], buildInfos[i]
 		}
 
 		// Format in the way GitHub Actions expects
@@ -167,7 +190,7 @@ var ciLatestCmd = &cobra.Command{
 
 Example:
   papermc ci latest paper
-  
+
 This will output just the latest version string, which can be used in scripts:
 
   latest_version=$(papermc ci latest paper)`,
@@ -176,7 +199,6 @@ This will output just the latest version string, which can be used in scripts:
 		projectID := args[0]
 		client := api.NewClient()
 
-		// Create context
 		ctx := context.Background()
 
 		// Get latest version

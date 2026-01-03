@@ -23,12 +23,16 @@ func TestCIMatrixCommand(t *testing.T) {
 	ciMatrixCmd.Run(ciMatrixCmd, []string{"paper"})
 
 	// Restore stdout
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("Failed to close writer: %v", err)
+	}
 	os.Stdout = oldStdout
 
 	// Read captured output
 	var buf bytes.Buffer
-	io.Copy(&buf, r)
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("Failed to copy output: %v", err)
+	}
 	output := buf.String()
 
 	// Check if output is valid JSON
@@ -71,12 +75,16 @@ func TestCIGitHubActionsCommand(t *testing.T) {
 	ciActionsCmd.Run(ciActionsCmd, []string{"paper"})
 
 	// Restore stdout
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("Failed to close writer: %v", err)
+	}
 	os.Stdout = oldStdout
 
 	// Read captured output
 	var buf bytes.Buffer
-	io.Copy(&buf, r)
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("Failed to copy output: %v", err)
+	}
 	output := buf.String()
 
 	// Check if output is valid JSON

@@ -11,6 +11,7 @@ import (
 var (
 	cfgFile string
 	limit   int
+	channel string
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -38,9 +39,16 @@ func init() {
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.papermc.yaml)")
 	rootCmd.PersistentFlags().IntVar(&limit, "limit", 0, "limit the number of items to show (0 means no limit)")
+	rootCmd.PersistentFlags().StringVar(&channel, "channel", "", "filter by channel (alpha, beta, stable, recommended)")
 
-	// Bind the limit flag to viper
-	viper.BindPFlag("limit", rootCmd.PersistentFlags().Lookup("limit"))
+	// Bind flags to viper
+	_ = viper.BindPFlag("limit", rootCmd.PersistentFlags().Lookup("limit"))
+	_ = viper.BindPFlag("channel", rootCmd.PersistentFlags().Lookup("channel"))
+
+	// Register channel flag completion
+	_ = rootCmd.RegisterFlagCompletionFunc("channel", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"alpha", "beta", "stable", "recommended"}, cobra.ShellCompDirectiveNoFileComp
+	})
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -71,7 +79,12 @@ func initConfig() {
 	}
 }
 
-// GetLimit returns the limit set from flags or config
+// GetLimit returns the limit set from flags or config.
 func GetLimit() int {
 	return viper.GetInt("limit")
+}
+
+// GetChannel returns the channel filter set from flags or config.
+func GetChannel() string {
+	return viper.GetString("channel")
 }

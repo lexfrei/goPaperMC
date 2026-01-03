@@ -14,7 +14,7 @@ func main() {
 	// Parse command line arguments
 	limit := 0
 	if len(os.Args) > 1 {
-		fmt.Sscanf(os.Args[1], "%d", &limit)
+		_, _ = fmt.Sscanf(os.Args[1], "%d", &limit)
 	}
 
 	// Create API client
@@ -34,25 +34,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	for _, project := range projects.Projects {
-		projectInfo, err := client.GetProject(ctx, project)
-		if err != nil {
-			fmt.Printf("%s (Error: %v)\n", project, errors.UnwrapAll(err))
-			continue
+	for _, projectInfo := range projects.Projects {
+		fmt.Printf("%s (%s)\n", projectInfo.Project.ID, projectInfo.Project.Name)
+
+		versions := make([]string, 0)
+		for _, groupVersions := range projectInfo.Versions {
+			versions = append(versions, groupVersions...)
 		}
-		fmt.Printf("%s (%s)\n", project, projectInfo.ProjectName)
-		
-		if len(projectInfo.Versions) > 0 {
+
+		if len(versions) > 0 {
 			count := 3
 			if limit > 0 && limit < count {
 				count = limit
 			}
-			
+
 			start := 0
-			if len(projectInfo.Versions) > count {
-				start = len(projectInfo.Versions) - count
+			if len(versions) > count {
+				start = len(versions) - count
 			}
-			for _, version := range projectInfo.Versions[start:] {
+			for _, version := range versions[start:] {
 				fmt.Printf("  %s\n", version)
 			}
 		}

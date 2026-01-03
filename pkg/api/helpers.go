@@ -2,31 +2,31 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 )
 
-// DownloadLatestBuild downloads the latest build of the specified project version
+// DownloadLatestBuild downloads the latest build of the specified project version.
 func (c *Client) DownloadLatestBuild(ctx context.Context, projectID, version, destDir string) (*DownloadResult, error) {
-	// Get the latest build number
-	buildNum, err := c.GetLatestBuild(ctx, projectID, version)
+	// Get the latest build
+	build, err := c.GetLatestBuildV3(ctx, projectID, version)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get latest build number")
+		return nil, errors.Wrap(err, "failed to get latest build")
 	}
 
-	// Get the default file name
-	downloadName, err := c.GetDefaultDownloadName(ctx, projectID, version, buildNum)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get default download name")
+	// Get download name
+	downloadName := build.GetDownloadName()
+	if downloadName == "" {
+		return nil, errors.New("no download found for this build")
 	}
 
 	// Form the save path
 	destPath := filepath.Join(destDir, downloadName)
 
 	// Download the file
-	result, err := c.DownloadFile(ctx, projectID, version, buildNum, downloadName, destPath)
+	result, err := c.DownloadFile(ctx, projectID, version, build.ID, destPath)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to download file")
 	}
@@ -34,7 +34,7 @@ func (c *Client) DownloadLatestBuild(ctx context.Context, projectID, version, de
 	return result, nil
 }
 
-// DownloadLatestStableVersion downloads the latest stable version of the project
+// DownloadLatestStableVersion downloads the latest stable version of the project.
 func (c *Client) DownloadLatestStableVersion(ctx context.Context, projectID, destDir string) (*DownloadResult, error) {
 	// Get the latest version
 	version, err := c.GetLatestVersion(ctx, projectID)
@@ -51,29 +51,31 @@ func (c *Client) DownloadLatestStableVersion(ctx context.Context, projectID, des
 	return result, nil
 }
 
-// FindPromotedBuild finds a recommended (promoted) build for the specified version
+// FindPromotedBuild finds a recommended (promoted) build for the specified version.
+// In v3 API, looks for builds with RECOMMENDED channel first, then STABLE.
 func (c *Client) FindPromotedBuild(ctx context.Context, projectID, version string) (int32, error) {
-	builds, err := c.GetBuilds(ctx, projectID, version)
+	// Try to find RECOMMENDED builds first
+	builds, err := c.GetBuilds(ctx, projectID, version, ChannelRecommended)
+	if err == nil && len(builds) > 0 {
+		return builds[len(builds)-1].ID, nil
+	}
+
+	// Fallback to STABLE builds
+	builds, err = c.GetBuilds(ctx, projectID, version, ChannelStable)
+	if err == nil && len(builds) > 0 {
+		return builds[len(builds)-1].ID, nil
+	}
+
+	// Fallback to latest build
+	latestBuild, err := c.GetLatestBuildV3(ctx, projectID, version)
 	if err != nil {
-		return 0, errors.Wrap(err, "failed to get builds")
+		return 0, errors.Wrap(err, "failed to get latest build")
 	}
 
-	// Look for promoted builds, starting from the end (from new to old)
-	for i := len(builds.Builds) - 1; i >= 0; i-- {
-		if builds.Builds[i].Promoted {
-			return builds.Builds[i].Build, nil
-		}
-	}
-
-	// If a promoted build is not found, return the latest
-	if len(builds.Builds) > 0 {
-		return builds.Builds[len(builds.Builds)-1].Build, nil
-	}
-
-	return 0, errors.New("no builds found for this version")
+	return latestBuild.ID, nil
 }
 
-// DownloadPromotedBuild downloads the recommended build of the specified version
+// DownloadPromotedBuild downloads the recommended build of the specified version.
 func (c *Client) DownloadPromotedBuild(ctx context.Context, projectID, version, destDir string) (*DownloadResult, error) {
 	// Find the promoted build
 	buildNum, err := c.FindPromotedBuild(ctx, projectID, version)
@@ -91,7 +93,7 @@ func (c *Client) DownloadPromotedBuild(ctx context.Context, projectID, version, 
 	destPath := filepath.Join(destDir, downloadName)
 
 	// Download the file
-	result, err := c.DownloadFile(ctx, projectID, version, buildNum, downloadName, destPath)
+	result, err := c.DownloadFile(ctx, projectID, version, buildNum, destPath)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to download file")
 	}
@@ -99,65 +101,55 @@ func (c *Client) DownloadPromotedBuild(ctx context.Context, projectID, version, 
 	return result, nil
 }
 
-// GetRecommendedVersion returns the recommended version for the project
-// Usually it's the latest stable (not SNAPSHOT and not pre) version
+// GetRecommendedVersion returns the recommended version for the project.
+// Usually it's the latest stable (not SNAPSHOT and not pre/rc) version.
 func (c *Client) GetRecommendedVersion(ctx context.Context, projectID string) (string, error) {
 	projectInfo, err := c.GetProject(ctx, projectID)
 	if err != nil {
 		return "", errors.Wrap(err, "failed to get project info")
 	}
 
-	if len(projectInfo.Versions) == 0 {
+	versions := projectInfo.FlattenVersions()
+	if len(versions) == 0 {
 		return "", errors.New("no versions found for this project")
 	}
 
-	// Look for versions without SNAPSHOT and pre, starting from the end (from new to old)
-	for i := len(projectInfo.Versions) - 1; i >= 0; i-- {
-		version := projectInfo.Versions[i]
+	// Look for versions without SNAPSHOT, pre, and rc, starting from the end (from new to old)
+	for i := len(versions) - 1; i >= 0; i-- {
+		version := versions[i]
 		if !isSnapshotOrPreRelease(version) {
 			return version, nil
 		}
 	}
 
 	// If a stable version is not found, return the latest
-	return projectInfo.Versions[len(projectInfo.Versions)-1], nil
+	return versions[len(versions)-1], nil
 }
 
-// isSnapshotOrPreRelease checks if a version is pre-release or SNAPSHOT
+// isSnapshotOrPreRelease checks if a version is pre-release, RC, or SNAPSHOT.
 func isSnapshotOrPreRelease(version string) bool {
-	return contains(version, "SNAPSHOT") || contains(version, "pre")
+	lower := strings.ToLower(version)
+	return strings.Contains(lower, "snapshot") ||
+		strings.Contains(lower, "-pre") ||
+		strings.Contains(lower, "-rc")
 }
 
-// contains checks if a string contains a substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && s[len(s)-len(substr):] == substr
-}
-
-// FormatDownloadURL returns a URL for direct file download
-func (c *Client) FormatDownloadURL(projectID, version string, build int32, downloadName string) string {
-	return fmt.Sprintf("%s/v2/projects/%s/versions/%s/builds/%d/downloads/%s", 
-		c.BaseURL, projectID, version, build, downloadName)
-}
-
-// GetLatestBuildURL returns the download URL for the latest build of a version
+// GetLatestBuildURL returns the download URL for the latest build of a version.
 func (c *Client) GetLatestBuildURL(ctx context.Context, projectID, version string) (string, error) {
-	// Get the latest build number
-	buildNum, err := c.GetLatestBuild(ctx, projectID, version)
+	build, err := c.GetLatestBuildV3(ctx, projectID, version)
 	if err != nil {
-		return "", errors.Wrap(err, "failed to get latest build number")
+		return "", errors.Wrap(err, "failed to get latest build")
 	}
 
-	// Get the default file name
-	downloadName, err := c.GetDefaultDownloadName(ctx, projectID, version, buildNum)
-	if err != nil {
-		return "", errors.Wrap(err, "failed to get default download name")
+	url := build.GetDownloadURL()
+	if url == "" {
+		return "", errors.New("no download URL found for this build")
 	}
 
-	// Format and return the URL
-	return c.FormatDownloadURL(projectID, version, buildNum, downloadName), nil
+	return url, nil
 }
 
-// GetLatestVersionURL returns the download URL for the latest version of a project
+// GetLatestVersionURL returns the download URL for the latest version of a project.
 func (c *Client) GetLatestVersionURL(ctx context.Context, projectID string) (string, error) {
 	// Get the latest version
 	version, err := c.GetLatestVersion(ctx, projectID)
@@ -174,7 +166,7 @@ func (c *Client) GetLatestVersionURL(ctx context.Context, projectID string) (str
 	return url, nil
 }
 
-// GetPromotedBuildURL returns the download URL for the promoted build of a version
+// GetPromotedBuildURL returns the download URL for the promoted build of a version.
 func (c *Client) GetPromotedBuildURL(ctx context.Context, projectID, version string) (string, error) {
 	// Find the promoted build
 	buildNum, err := c.FindPromotedBuild(ctx, projectID, version)
@@ -182,24 +174,30 @@ func (c *Client) GetPromotedBuildURL(ctx context.Context, projectID, version str
 		return "", errors.Wrap(err, "failed to find promoted build")
 	}
 
-	// Get the default file name
-	downloadName, err := c.GetDefaultDownloadName(ctx, projectID, version, buildNum)
+	build, err := c.GetBuild(ctx, projectID, version, buildNum)
 	if err != nil {
-		return "", errors.Wrap(err, "failed to get default download name")
+		return "", errors.Wrap(err, "failed to get build info")
 	}
 
-	// Format and return the URL
-	return c.FormatDownloadURL(projectID, version, buildNum, downloadName), nil
+	url := build.GetDownloadURL()
+	if url == "" {
+		return "", errors.New("no download URL found for this build")
+	}
+
+	return url, nil
 }
 
-// GetBuildURL returns the download URL for a specific build
+// GetBuildURL returns the download URL for a specific build.
 func (c *Client) GetBuildURL(ctx context.Context, projectID, version string, build int32) (string, error) {
-	// Get the default file name
-	downloadName, err := c.GetDefaultDownloadName(ctx, projectID, version, build)
+	buildInfo, err := c.GetBuild(ctx, projectID, version, build)
 	if err != nil {
-		return "", errors.Wrap(err, "failed to get default download name")
+		return "", errors.Wrap(err, "failed to get build info")
 	}
 
-	// Format and return the URL
-	return c.FormatDownloadURL(projectID, version, build, downloadName), nil
+	url := buildInfo.GetDownloadURL()
+	if url == "" {
+		return "", errors.New("no download URL found for this build")
+	}
+
+	return url, nil
 }

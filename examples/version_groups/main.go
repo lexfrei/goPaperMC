@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"time"
 
@@ -16,15 +17,15 @@ func main() {
 		fmt.Println("Usage: version_groups <project_id> [limit]")
 		os.Exit(1)
 	}
-	
+
 	projectID := os.Args[1]
-	
+
 	// Parse limit if provided
 	limit := 0
 	if len(os.Args) > 2 {
 		limit, _ = strconv.Atoi(os.Args[2])
 	}
-	
+
 	// Create API client
 	client := api.NewClient().WithTimeout(10 * time.Second)
 	if limit > 0 {
@@ -41,42 +42,40 @@ func main() {
 		fmt.Printf("Error: %v\n", errors.UnwrapAll(err))
 		os.Exit(1)
 	}
-	
-	for _, groupName := range projectInfo.VersionGroups {
+
+	// Get sorted version groups
+	groups := make([]string, 0, len(projectInfo.Versions))
+	for group := range projectInfo.Versions {
+		groups = append(groups, group)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(groups)))
+
+	for _, groupName := range groups {
 		fmt.Printf("%s\n", groupName)
-		
-		// Get version group information
-		group, err := client.GetVersionGroup(ctx, projectID, groupName)
-		if err != nil {
-			fmt.Printf("  Error: %v\n", errors.UnwrapAll(err))
-			continue
-		}
-		
-		// Get builds for the version group
-		builds, err := client.GetVersionGroupBuilds(ctx, projectID, groupName)
-		if err != nil {
-			fmt.Printf("  Error: %v\n", errors.UnwrapAll(err))
-			continue
-		}
-		
-		// Display recent builds (limited by client or default 3)
+
+		versions := projectInfo.Versions[groupName]
+
+		// Display versions in the group
 		count := 3
 		if limit > 0 && limit < count {
 			count = limit
 		}
-		
-		if len(builds.Builds) < count {
-			count = len(builds.Builds)
+
+		if len(versions) < count {
+			count = len(versions)
 		}
-		
-		for i := len(builds.Builds) - count; i < len(builds.Builds); i++ {
-			build := builds.Builds[i]
-			promoted := ""
-			if build.Promoted {
-				promoted = " (promoted)"
+
+		for i := len(versions) - count; i < len(versions); i++ {
+			version := versions[i]
+
+			// Get latest build for this version
+			build, err := client.GetLatestBuildV3(ctx, projectID, version)
+			if err != nil {
+				fmt.Printf("  %s (Error: %v)\n", version, errors.UnwrapAll(err))
+				continue
 			}
-			
-			fmt.Printf("  %s %d%s\n", build.Version, build.Build, promoted)
+
+			fmt.Printf("  %s build %d (%s)\n", version, build.ID, build.Channel)
 		}
 	}
 }
