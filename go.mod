@@ -6,7 +6,7 @@ require (
 	github.com/cockroachdb/errors v1.12.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
-	golang.org/x/mod v0.31.0
+	golang.org/x/mod v0.33.0
 )
 
 require (
