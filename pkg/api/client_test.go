@@ -388,3 +388,106 @@ func TestGetBuildDownloadURL(t *testing.T) {
 		t.Errorf("Expected direct download URL, got '%s'", url)
 	}
 }
+
+func TestGetLatestVersion_NoChannelFilter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := ProjectV3Response{
+			Project: ProjectMeta{ID: "paper", Name: "Paper"},
+			Versions: map[string][]string{
+				"26.1": {"26.1.2", "26.1.1"},
+				"26.2": {"26.2"},
+			},
+		}
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Fatalf("Failed to encode response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient().WithBaseURL(server.URL)
+	version, err := client.GetLatestVersion(context.Background(), "paper")
+	if err != nil {
+		t.Fatalf("GetLatestVersion failed: %v", err)
+	}
+
+	if version != "26.2" {
+		t.Errorf("Expected latest version '26.2', got '%s'", version)
+	}
+}
+
+// TestGetLatestVersion_WithChannelFilter reproduces a real-world case: the
+// newest version overall (26.2) only ever received ALPHA/BETA builds, while
+// the previous version (26.1.2) has a STABLE build. With a stable channel
+// filter, GetLatestVersion must skip 26.2 and return 26.1.2.
+func TestGetLatestVersion_WithChannelFilter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v3/projects/paper":
+			resp := ProjectV3Response{
+				Project: ProjectMeta{ID: "paper", Name: "Paper"},
+				Versions: map[string][]string{
+					"26.1": {"26.1.2", "26.1.1"},
+					"26.2": {"26.2"},
+				},
+			}
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
+				t.Fatalf("Failed to encode response: %v", err)
+			}
+		case "/v3/projects/paper/versions/26.2/builds":
+			// 26.2 only ever had ALPHA/BETA builds, no STABLE build exists.
+			if err := json.NewEncoder(w).Encode([]BuildV3Response{}); err != nil {
+				t.Fatalf("Failed to encode response: %v", err)
+			}
+		case "/v3/projects/paper/versions/26.1.2/builds":
+			if got := r.URL.Query().Get("channel"); got != "STABLE" {
+				t.Errorf("Expected channel=STABLE query param, got %q (raw query %q)", got, r.URL.RawQuery)
+			}
+			resp := []BuildV3Response{{ID: 10, Channel: "STABLE"}}
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
+				t.Fatalf("Failed to encode response: %v", err)
+			}
+		case "/v3/projects/paper/versions/26.1.1/builds":
+			t.Error("Should not need to check 26.1.1: 26.1.2 already has a matching stable build")
+		default:
+			t.Errorf("Unexpected request path: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient().WithBaseURL(server.URL).WithChannel(ChannelStable)
+	version, err := client.GetLatestVersion(context.Background(), "paper")
+	if err != nil {
+		t.Fatalf("GetLatestVersion with channel filter failed: %v", err)
+	}
+
+	if version != "26.1.2" {
+		t.Errorf("Expected latest stable version '26.1.2' (26.2 has no stable build), got '%s'", version)
+	}
+}
+
+func TestGetLatestVersion_ChannelFilter_NoMatchingVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v3/projects/paper" {
+			resp := ProjectV3Response{
+				Project:  ProjectMeta{ID: "paper", Name: "Paper"},
+				Versions: map[string][]string{"26.2": {"26.2"}},
+			}
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
+				t.Fatalf("Failed to encode response: %v", err)
+			}
+			return
+		}
+
+		// No version has a build in the requested channel.
+		if err := json.NewEncoder(w).Encode([]BuildV3Response{}); err != nil {
+			t.Fatalf("Failed to encode response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient().WithBaseURL(server.URL).WithChannel(ChannelStable)
+	if _, err := client.GetLatestVersion(context.Background(), "paper"); err == nil {
+		t.Fatal("Expected error when no version has a build in the requested channel")
+	}
+}

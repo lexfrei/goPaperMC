@@ -91,6 +91,8 @@ func (c *Client) GetLatestBuild(ctx context.Context, projectID, version string) 
 }
 
 // GetLatestVersion returns the latest available version for a project.
+// If a channel filter is set on the client (see WithChannel), only versions
+// that have at least one build in that channel are considered.
 func (c *Client) GetLatestVersion(ctx context.Context, projectID string) (string, error) {
 	projectInfo, err := c.GetProject(ctx, projectID)
 	if err != nil {
@@ -102,8 +104,27 @@ func (c *Client) GetLatestVersion(ctx context.Context, projectID string) (string
 		return "", errors.New("no versions found for this project")
 	}
 
-	// The latest version is the last one in the flattened list
-	return versions[len(versions)-1], nil
+	if c.Channel == "" {
+		// The latest version is the last one in the flattened list
+		return versions[len(versions)-1], nil
+	}
+
+	// Walk from newest to oldest and return the first version that has at
+	// least one build in the requested channel.
+	for i := len(versions) - 1; i >= 0; i-- {
+		version := versions[i]
+
+		builds, err := c.GetBuilds(ctx, projectID, version, c.Channel)
+		if err != nil {
+			continue
+		}
+
+		if len(builds) > 0 {
+			return version, nil
+		}
+	}
+
+	return "", errors.Newf("no version found with a build in channel %s", c.Channel)
 }
 
 // GetDefaultDownloadName returns the name of the main downloadable file for a build.
