@@ -199,6 +199,11 @@ This will output just the latest version string, which can be used in scripts:
 		projectID := args[0]
 		client := api.NewClient()
 
+		// Apply channel filter if set
+		if ch := GetChannel(); ch != "" {
+			client.WithChannel(api.Channel(ch))
+		}
+
 		ctx := context.Background()
 
 		// Get latest version

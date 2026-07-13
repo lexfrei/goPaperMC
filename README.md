@@ -1,6 +1,6 @@
 # goPaperMC
 
-goPaperMC is a Go client for the [PaperMC API](https://api.papermc.io), which allows you to interact with the PaperMC API to retrieve information about projects, versions, builds, and download files.
+goPaperMC is a Go client for the [PaperMC API](https://fill.papermc.io), which allows you to interact with the PaperMC API to retrieve information about projects, versions, builds, and download files.
 
 ## Features
 
